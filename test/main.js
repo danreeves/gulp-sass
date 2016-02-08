@@ -5,6 +5,7 @@ var gutil = require('gulp-util');
 var path = require('path');
 var fs = require('fs');
 var sass = require('../index');
+var rimraf = require('rimraf');
 var gulp = require('gulp');
 var sourcemaps = require('gulp-sourcemaps');
 var postcss = require('gulp-postcss');
@@ -54,6 +55,23 @@ describe('gulp-sass -- async compile', function() {
       done();
     });
     stream.write(streamFile);
+  });
+
+  it('should compile an empty sass file', function(done) {
+    var sassFile = createVinyl('empty.scss');
+    var stream = sass();
+    stream.on('data', function(cssFile) {
+      should.exist(cssFile);
+      should.exist(cssFile.path);
+      should.exist(cssFile.relative);
+      should.exist(cssFile.contents);
+      should.equal(path.basename(cssFile.path), 'empty.css');
+      String(cssFile.contents).should.equal(
+        fs.readFileSync(path.join(__dirname, 'expected/empty.css'), 'utf8')
+      );
+      done();
+    });
+    stream.write(sassFile);
   });
 
   it('should compile a single sass file', function(done) {
@@ -129,7 +147,23 @@ describe('gulp-sass -- async compile', function() {
       // Error must include file error occurs in
       err.message.indexOf('test/scss/error.scss').should.not.equal(-1);
       // Error must include line and column error occurs on
-      err.message.indexOf('2:7').should.not.equal(-1);
+      err.message.indexOf('on line 2').should.not.equal(-1);
+      // Error must include relativePath property
+      err.relativePath.should.equal('test/scss/error.scss');
+      done();
+    });
+    stream.write(errorFile);
+  });
+
+  it('should preserve the original sass error message', function(done) {
+    var errorFile = createVinyl('error.scss');
+    var stream = sass();
+
+    stream.on('error', function(err) {
+      // Error must include original error message
+      err.messageOriginal.indexOf('property "font" must be followed by a \':\'').should.not.equal(-1);
+      // Error must not format or change the original error message
+      err.messageOriginal.indexOf('on line 2').should.equal(-1);
       done();
     });
     stream.write(errorFile);
@@ -183,9 +217,9 @@ describe('gulp-sass -- async compile', function() {
 
     // Expected sources are relative to file.base
     var expectedSources = [
+      'inheritance.scss',
       'includes/_cats.scss',
       'includes/_dogs.sass',
-      'inheritance.scss'
     ];
 
     var stream;
@@ -257,6 +291,10 @@ describe('gulp-sass -- async compile', function() {
 });
 
 describe('gulp-sass -- sync compile', function() {
+  beforeEach(function(done) {
+    rimraf(path.join(__dirname, '/results/'), done);
+  });
+
   it('should pass file when it isNull()', function(done) {
     var stream = sass.sync();
     var emptyFile = {
@@ -357,6 +395,7 @@ describe('gulp-sass -- sync compile', function() {
 
     stream.on('error', function(err) {
       err.message.indexOf('property "font" must be followed by a \':\'').should.not.equal(-1);
+      err.relativePath.should.equal('test/scss/error.scss');
       done();
     });
     stream.write(errorFile);
@@ -367,9 +406,9 @@ describe('gulp-sass -- sync compile', function() {
 
     // Expected sources are relative to file.base
     var expectedSources = [
+      'inheritance.scss',
       'includes/_cats.scss',
       'includes/_dogs.sass',
-      'inheritance.scss'
     ];
 
     var stream;
@@ -393,10 +432,16 @@ describe('gulp-sass -- sync compile', function() {
   });
 
   it('should work with gulp-sourcemaps and autoprefixer', function(done) {
-    var expectedSources = [
+    var expectedSourcesBefore = [
+      'inheritance.scss',
       'includes/_cats.scss',
       'includes/_dogs.sass',
-      'inheritance.scss'
+    ];
+
+    var expectedSourcesAfter = [
+      'includes/_cats.scss',
+      'includes/_dogs.sass',
+      'inheritance.scss',
     ];
 
     gulp.src(path.join(__dirname, '/scss/inheritance.scss'))
@@ -404,14 +449,14 @@ describe('gulp-sass -- sync compile', function() {
       .pipe(sass.sync())
       .pipe(tap(function(file) {
         should.exist(file.sourceMap);
-        file.sourceMap.sources.should.eql(expectedSources);
+        file.sourceMap.sources.should.eql(expectedSourcesBefore);
       }))
       .pipe(postcss([autoprefixer()]))
       .pipe(sourcemaps.write())
       .pipe(gulp.dest(path.join(__dirname, '/results/')))
       .pipe(tap(function(file) {
         should.exist(file.sourceMap);
-        file.sourceMap.sources.should.eql(expectedSources);
+        file.sourceMap.sources.should.eql(expectedSourcesAfter);
       }))
       .on('end', done);
   });
@@ -437,9 +482,15 @@ describe('gulp-sass -- sync compile', function() {
   });
 
   it('should work with gulp-sourcemaps and autoprefixer with different file.base', function(done) {
-    var expectedSources = [
-      'includes/_cats.scss',
-      'includes/_dogs.sass',
+    var expectedSourcesBefore = [
+      'scss/inheritance.scss',
+      'scss/includes/_cats.scss',
+      'scss/includes/_dogs.sass'
+    ];
+
+    var expectedSourcesAfter = [
+      'scss/includes/_cats.scss',
+      'scss/includes/_dogs.sass',
       'scss/inheritance.scss'
     ];
 
@@ -448,12 +499,12 @@ describe('gulp-sass -- sync compile', function() {
       .pipe(sass.sync())
       .pipe(tap(function(file) {
         should.exist(file.sourceMap);
-        file.sourceMap.sources.should.eql(expectedSources);
+        file.sourceMap.sources.should.eql(expectedSourcesBefore);
       }))
       .pipe(postcss([autoprefixer()]))
       .pipe(tap(function(file) {
         should.exist(file.sourceMap);
-        file.sourceMap.sources.should.eql(expectedSources);
+        file.sourceMap.sources.should.eql(expectedSourcesAfter);
       }))
       .on('end', done);
   });
@@ -462,6 +513,14 @@ describe('gulp-sass -- sync compile', function() {
     gulp.src(path.join(__dirname, '/scss/empty.scss'))
       .pipe(sass.sync())
       .pipe(gulp.dest(path.join(__dirname, '/results/')))
+      .pipe(tap(function() {
+        try {
+          fs.statSync(path.join(__dirname, '/results/empty.css'));
+        }
+        catch (e) {
+          should.fail(false, true, 'Empty file was produced');
+        }
+      }))
       .on('end', done);
   });
 });
